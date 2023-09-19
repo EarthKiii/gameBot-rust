@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 use anyhow::anyhow;
 use serenity::builder::CreateEmbed;
 use serenity::model::prelude::command::CommandOptionType;
@@ -115,7 +114,7 @@ impl Bot {
                 game_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
             );
-            
+
             CREATE TABLE IF NOT EXISTS game_entries (
                 user_id INTEGER NOT NULL,
                 game_id INTEGER NOT NULL,
