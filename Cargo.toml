@@ -12,3 +12,4 @@ shuttle-secrets = "0.25.0"
 tokio = "1.26.0"
 tracing = "0.1.37"
 sqlx = { version = "0.7", features = [ "runtime-tokio", "sqlite" ] }
+chrono = "0.4.31"
