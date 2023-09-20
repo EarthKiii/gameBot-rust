@@ -192,7 +192,7 @@ impl EventHandler for Bot {
         let user_activity: &Activity = &new_data.activities[0];
         let game_name: &String = &user_activity.name;
         if user_activity.kind == ActivityType::Playing {
-            let starttime = Duration::milliseconds(i64::try_from(user_activity.timestamps.as_ref().unwrap().start.unwrap()).unwrap()).num_seconds();
+            let starttime = i64::try_from(std::time::Duration::from_millis(user_activity.timestamps.as_ref().unwrap().start.unwrap()).as_secs()).unwrap();
             self.register_session(&user_id, game_name, &starttime).await;
         }
     }
