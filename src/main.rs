@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use chrono::{Utc, TimeZone, Duration};
 use serenity::builder::CreateEmbed;
 use serenity::model::prelude::command::CommandOptionType;
 use serenity::model::prelude::{Interaction, InteractionResponseType, Presence, ActivityType, Activity, UserId};
@@ -11,7 +12,7 @@ use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use shuttle_secrets::SecretStore;
 use tracing::info;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::convert::TryFrom;
 
 
@@ -48,8 +49,10 @@ impl Bot {
                                             .bind(user_id)
                                             .fetch_all(&self.pool).await.unwrap() {
             let game_name: &str = row.get::<&str, usize>(0);
-            let playtime: i64 = row.get::<i64, usize>(1);
-            embed.field(game_name, playtime, true);
+            let playtime = Duration::seconds(row.get::<i64, usize>(1));
+            let tmp_datetime = Utc.with_ymd_and_hms(1337, 1, 1, 0, 0, 0).unwrap() + playtime;
+            let formated_playtime = tmp_datetime.format("%X").to_string();
+            embed.field(game_name, formated_playtime, true);
         }
         return embed;
     }
@@ -140,7 +143,6 @@ impl Bot {
             END;
             "
         ).execute(&self.pool).await.unwrap();
-    
     }
 }
 
@@ -190,7 +192,7 @@ impl EventHandler for Bot {
         let user_activity: &Activity = &new_data.activities[0];
         let game_name: &String = &user_activity.name;
         if user_activity.kind == ActivityType::Playing {
-            let starttime = i64::try_from(Duration::from_millis(user_activity.timestamps.as_ref().unwrap().start.unwrap()).as_secs()).unwrap();
+            let starttime = Duration::milliseconds(i64::try_from(user_activity.timestamps.as_ref().unwrap().start.unwrap()).unwrap()).num_seconds();
             self.register_session(&user_id, game_name, &starttime).await;
         }
     }
