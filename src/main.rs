@@ -6,8 +6,10 @@ use serenity::model::prelude::{Interaction, InteractionResponseType, Presence, A
 use serenity::model::user::User;
 use serenity::utils::Colour;
 use serenity::{async_trait, model::prelude::GuildId};
-use sqlx::{query, Row};
-use sqlx::sqlite::{SqlitePoolOptions, SqliteRow, SqliteConnectOptions};
+use sqlx::{query, Row, PgPool};
+//use sqlx::sqlite::{SqlitePoolOptions, SqliteRow, SqliteConnectOptions};
+use shuttle_service::ResourceBuilder;
+use sqlx::postgres::PgRow;
 use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 use shuttle_secrets::SecretStore;
@@ -17,19 +19,19 @@ use std::convert::TryFrom;
 
 
 struct Bot {
-    pool: sqlx::SqlitePool
+    pool: PgPool
 }
 
 impl Bot {
     async fn save_session(&self, user_id: &i64) {
-        let row = query("SELECT game_id, starttime FROM game_sessions WHERE user_id=?")
+        let row = query("SELECT game_id, starttime FROM game_sessions WHERE user_id=$1;")
                                             .bind(user_id)
                                             .fetch_optional(&self.pool).await.unwrap();
         if row.is_none() {
             return;
         }
         info!("Saving {:?}'s session", user_id);
-        let row: SqliteRow = row.unwrap();
+        let row: PgRow = row.unwrap();
         let game_id: i64 = row.get::<i64, usize>(0);
         let starttime: i64 = row.get::<i64, usize>(1);
         let currenttime: i64 = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).unwrap();
@@ -45,7 +47,7 @@ impl Bot {
             .colour(Colour::TEAL)
             .title(format!("{}'s playtime summary", user.name)).to_owned();
 
-        for row in query("SELECT name, playtime FROM game_entries NATURAL JOIN games WHERE user_id=? ORDER BY playtime DESC LIMIT 10")
+        for row in query("SELECT name, playtime FROM game_entries NATURAL JOIN games WHERE user_id=$1 ORDER BY playtime DESC LIMIT 10;")
                                             .bind(user_id)
                                             .fetch_all(&self.pool).await.unwrap() {
             let game_name: &str = row.get::<&str, usize>(0);
@@ -58,7 +60,7 @@ impl Bot {
     }
     
     async fn is_game_in_db(&self, game_name: &String) -> bool {
-        let row = query("SELECT * FROM games WHERE name=?")
+        let row = query("SELECT * FROM games WHERE name=$1;")
                                             .bind(game_name)
                                             .fetch_optional(&self.pool).await.unwrap();
         return row.is_some();
@@ -71,7 +73,7 @@ impl Bot {
         }
         info!("Registering {:?}'s session", user_id);
         let game_id: i64 = self.get_game_id(game_name).await;
-        query("INSERT INTO game_sessions (user_id, game_id, starttime) VALUES (?, ?, ?)")
+        query("INSERT INTO game_sessions (user_id, game_id, starttime) VALUES ($1, $2, $3);")
             .bind(user_id)
             .bind(game_id)
             .bind(starttime)
@@ -79,25 +81,25 @@ impl Bot {
     }
     
     async fn get_game_id(&self, game_name: &String) -> i64 {
-        let row = query("SELECT game_id FROM games WHERE name=?")
+        let row = query("SELECT game_id FROM games WHERE name=$1;")
                                             .bind(game_name)
                                             .fetch_one(&self.pool).await.unwrap();
         return row.get::<i64, usize>(0);
     }
     
     async fn add_playtime(&self, user_id: &i64, game_id: &i64, playtime: &i64) {
-        let row = query("SELECT * FROM game_entries WHERE user_id=? AND game_id=?")
+        let row = query("SELECT * FROM game_entries WHERE user_id=$1 AND game_id=$2;")
                                             .bind(user_id)
                                             .bind(game_id)
                                             .fetch_optional(&self.pool).await.unwrap();
         if row.is_none() {
-            query("INSERT INTO game_entries (user_id, game_id, playtime) VALUES (?, ?, ?)")
+            query("INSERT INTO game_entries (user_id, game_id, playtime) VALUES ($1, $2, $3);")
                 .bind(user_id)
                 .bind(game_id)
                 .bind(playtime)
                 .execute(&self.pool).await.unwrap();
         } else {
-            query("UPDATE game_entries SET playtime=playtime+? WHERE user_id=? AND game_id=?")
+            query("UPDATE game_entries SET playtime=playtime+$1 WHERE user_id=$2 AND game_id=$3;")
                 .bind(playtime)
                 .bind(user_id)
                 .bind(game_id)
@@ -106,7 +108,7 @@ impl Bot {
     }
     
     async fn add_game(&self, game_name: &String) {
-        query("INSERT INTO games (name) VALUES (?)")
+        query("INSERT INTO games (name) VALUES ($1);")
             .bind(game_name)
             .execute(&self.pool).await.unwrap();
     }
@@ -114,35 +116,55 @@ impl Bot {
     async fn build_db(&self) {
         query(
             "CREATE TABLE IF NOT EXISTS games (
-                game_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE
-            );
-
-            CREATE TABLE IF NOT EXISTS game_entries (
-                user_id INTEGER NOT NULL,
-                game_id INTEGER NOT NULL,
-                playtime INTEGER NOT NULL,
+            );").execute(&self.pool).await.unwrap();
+        query(
+            "CREATE TABLE IF NOT EXISTS game_entries (
+                user_id INT NOT NULL,
+                game_id INT NOT NULL,
+                playtime INT NOT NULL,
                 PRIMARY KEY (user_id, game_id),
                 FOREIGN KEY (game_id) REFERENCES games(game_id)
-            );
-            
-            CREATE TABLE IF NOT EXISTS game_sessions (
-                user_id INTEGER NOT NULL,
-                game_id INTEGER NOT NULL,
-                starttime INTEGER NOT NULL,
+            );").execute(&self.pool).await.unwrap();
+        query(   
+            "CREATE TABLE IF NOT EXISTS game_sessions (
+                user_id INT NOT NULL,
+                game_id INT NOT NULL,
+                starttime INT NOT NULL,
                 PRIMARY KEY (user_id, game_id),
                 FOREIGN KEY (game_id) REFERENCES games(game_id)
-            );
-
-            DELETE FROM game_sessions;
-
-            CREATE TRIGGER IF NOT EXISTS trigger_clear_sessions
-            AFTER INSERT ON game_entries
-            BEGIN
-                DELETE FROM game_sessions WHERE user_id = NEW.user_id AND game_id = NEW.game_id;
-            END;
-            "
+            );").execute(&self.pool).await.unwrap();
+        query( 
+            "DELETE FROM game_sessions;"
         ).execute(&self.pool).await.unwrap();
+        query(
+            "CREATE OR REPLACE FUNCTION remove_session()
+                RETURNS TRIGGER 
+                AS
+                $$
+                BEGIN
+                    DELETE FROM game_sessions WHERE user_id = NEW.user_id AND game_id = NEW.game_id;
+                    RETURN NEW;
+                END;
+            $$ LANGUAGE plpgsql;"
+        ).execute(&self.pool).await.unwrap();
+        query(
+            "CREATE OR REPLACE TRIGGER trigger_clear_sessions
+                AFTER INSERT ON game_entries
+                FOR EACH ROW
+                EXECUTE PROCEDURE remove_session();"
+        ).execute(&self.pool).await.unwrap();
+    }
+
+    async fn resetall(&self) {
+        query("DELETE FROM game_entries; DELETE FROM game_sessions; DELETE FROM games; UPDATE sqlite_sequence SET seq=0 WHERE name = 'games';").execute(&self.pool).await.unwrap();
+    }
+
+    async fn reset(&self, user_id: &i64) {
+        query("DELETE FROM game_entries WHERE user_id=$1; DELETE FROM game_sessions WHERE user_id=$1;")
+            .bind(user_id)
+            .execute(&self.pool).await.unwrap();
     }
 }
 
@@ -158,6 +180,9 @@ impl EventHandler for Bot {
             commands
                 .create_application_command(|command| { command.name("summarize").description("Shows the 10 most played games of a user") 
                     .create_option(|option| {option.name("user").description("The target").kind(CommandOptionType::User).required(true)}) })
+                .create_application_command(|command| { command.name("reset").description("Resets the player's playtimes") 
+                    .create_option(|option| {option.name("user").description("The target").kind(CommandOptionType::User).required(true)}) })
+                .create_application_command(|command| { command.name("resetall").description("Resets all playtimes and games")}) 
         }).await.unwrap();
     }
 
@@ -175,6 +200,35 @@ impl EventHandler for Bot {
                         response
                             .kind(InteractionResponseType::ChannelMessageWithSource)
                             .interaction_response_data(|message| message.set_embed(embed))
+                    })
+                        .await.expect("Cannot respond to slash command");
+                }.await,
+                "reset" => async {
+                    let mut message_str = "You don't have the permission to use this command.".to_string();
+                    if command.user.id.to_string() == "618355400038940682" {
+                        let user_id = command.data.options[0].value.as_ref().unwrap().as_str().unwrap().parse::<u64>().unwrap(); 
+                        let user = UserId(user_id).to_user(&ctx.http).await.unwrap();
+                        self.reset(&i64::try_from(*user.id.as_u64()).unwrap()).await;
+                        message_str = format!("Successfully reseted {}'s playtimes.", user.mention());
+                    }
+                    
+                    command.create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| message.ephemeral(true).content(message_str))
+                    })
+                        .await.expect("Cannot respond to slash command");
+                }.await,
+                "resetall" => async {
+                    let mut message_str = "You don't have the permission to use this command.".to_string();
+                    if command.user.id.to_string() == "618355400038940682" {
+                        self.resetall().await;
+                        message_str = "Successfully reseted all playtimes and games.".to_string();
+                    }
+                    command.create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| message.ephemeral(true).content(message_str))
                     })
                         .await.expect("Cannot respond to slash command");
                 }.await,
@@ -203,7 +257,7 @@ impl EventHandler for Bot {
 
 #[shuttle_runtime::main]
 async fn serenity(
-    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+    #[shuttle_secrets::Secrets] secret_store: SecretStore, #[shuttle_shared_db::Postgres] pool: PgPool,
 ) -> shuttle_serenity::ShuttleSerenity {
     // Get the discord token set in `Secrets.toml`
     let token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
@@ -211,13 +265,13 @@ async fn serenity(
     } else {
         return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
     };
-    let options = SqliteConnectOptions::new()
+    /*let options = SqliteConnectOptions::new()
         .filename("data.db")
         .create_if_missing(true);
 
     let pool = SqlitePoolOptions::new()
         .max_connections(3)
-        .connect_with(options).await.unwrap();
+        .connect_with(options).await.unwrap();*/
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_PRESENCES;
     let client = Client::builder(&token, intents)
