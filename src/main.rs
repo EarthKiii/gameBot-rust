@@ -7,7 +7,6 @@ use serenity::model::user::User;
 use serenity::utils::Colour;
 use serenity::{async_trait, model::prelude::GuildId};
 use sqlx::{query, Row, PgPool};
-//use sqlx::sqlite::{SqlitePoolOptions, SqliteRow, SqliteConnectOptions};
 use shuttle_service::ResourceBuilder;
 use sqlx::postgres::PgRow;
 use serenity::model::gateway::Ready;
@@ -265,13 +264,6 @@ async fn serenity(
     } else {
         return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
     };
-    /*let options = SqliteConnectOptions::new()
-        .filename("data.db")
-        .create_if_missing(true);
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(3)
-        .connect_with(options).await.unwrap();*/
     // Set gateway intents, which decides what events the bot will be notified about
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILD_PRESENCES;
     let client = Client::builder(&token, intents)
