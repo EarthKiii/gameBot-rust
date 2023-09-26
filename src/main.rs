@@ -115,22 +115,22 @@ impl Bot {
     async fn build_db(&self) {
         query(
             "CREATE TABLE IF NOT EXISTS games (
-                game_id SERIAL PRIMARY KEY,
+                game_id BIGSERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE
             );").execute(&self.pool).await.unwrap();
         query(
             "CREATE TABLE IF NOT EXISTS game_entries (
-                user_id INT NOT NULL,
-                game_id INT NOT NULL,
-                playtime INT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game_id BIGINT NOT NULL,
+                playtime BIGINT NOT NULL,
                 PRIMARY KEY (user_id, game_id),
                 FOREIGN KEY (game_id) REFERENCES games(game_id)
             );").execute(&self.pool).await.unwrap();
         query(   
             "CREATE TABLE IF NOT EXISTS game_sessions (
-                user_id INT NOT NULL,
-                game_id INT NOT NULL,
-                starttime INT NOT NULL,
+                user_id BIGINT NOT NULL,
+                game_id BIGINT NOT NULL,
+                starttime BIGINT NOT NULL,
                 PRIMARY KEY (user_id, game_id),
                 FOREIGN KEY (game_id) REFERENCES games(game_id)
             );").execute(&self.pool).await.unwrap();
@@ -157,13 +157,26 @@ impl Bot {
     }
 
     async fn resetall(&self) {
-        query("DELETE FROM game_entries; DELETE FROM game_sessions; DELETE FROM games; UPDATE sqlite_sequence SET seq=0 WHERE name = 'games';").execute(&self.pool).await.unwrap();
+        query("DELETE FROM game_entries;").execute(&self.pool).await.unwrap();
+        query("DELETE FROM game_sessions;").execute(&self.pool).await.unwrap();
+        query("DELETE FROM games;").execute(&self.pool).await.unwrap();
     }
 
     async fn reset(&self, user_id: &i64) {
-        query("DELETE FROM game_entries WHERE user_id=$1; DELETE FROM game_sessions WHERE user_id=$1;")
+        query("DELETE FROM game_entries WHERE user_id=$1;")
             .bind(user_id)
             .execute(&self.pool).await.unwrap();
+        query("DELETE FROM game_sessions WHERE user_id=$1;")
+            .bind(user_id)
+            .execute(&self.pool).await.unwrap();
+    }
+
+    async fn hardreset(&self) {
+        self.resetall().await;
+        query("DROP TABLE game_entries;").execute(&self.pool).await.unwrap();
+        query("DROP TABLE game_sessions;").execute(&self.pool).await.unwrap();
+        query("DROP TABLE games;").execute(&self.pool).await.unwrap();
+        self.build_db().await;
     }
 }
 
@@ -181,7 +194,8 @@ impl EventHandler for Bot {
                     .create_option(|option| {option.name("user").description("The target").kind(CommandOptionType::User).required(true)}) })
                 .create_application_command(|command| { command.name("reset").description("Resets the player's playtimes") 
                     .create_option(|option| {option.name("user").description("The target").kind(CommandOptionType::User).required(true)}) })
-                .create_application_command(|command| { command.name("resetall").description("Resets all playtimes and games")}) 
+                .create_application_command(|command| { command.name("resetall").description("Resets all playtimes and games")})
+                .create_application_command(|command| { command.name("hardreset").description("Destroys the database")})  
         }).await.unwrap();
     }
 
@@ -223,6 +237,19 @@ impl EventHandler for Bot {
                     if command.user.id.to_string() == "618355400038940682" {
                         self.resetall().await;
                         message_str = "Successfully reseted all playtimes and games.".to_string();
+                    }
+                    command.create_interaction_response(&ctx.http, |response| {
+                        response
+                            .kind(InteractionResponseType::ChannelMessageWithSource)
+                            .interaction_response_data(|message| message.ephemeral(true).content(message_str))
+                    })
+                        .await.expect("Cannot respond to slash command");
+                }.await,
+                "hardreset" => async {
+                    let mut message_str = "You don't have the permission to use this command.".to_string();
+                    if command.user.id.to_string() == "618355400038940682" {
+                        self.hardreset().await;
+                        message_str = "Successfully reconstructed the database".to_string();
                     }
                     command.create_interaction_response(&ctx.http, |response| {
                         response
