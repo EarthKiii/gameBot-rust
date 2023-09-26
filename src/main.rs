@@ -35,7 +35,7 @@ impl Bot {
         let starttime: i64 = row.get::<i64, usize>(1);
         let currenttime: i64 = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).unwrap();
         let playtime: i64 = currenttime - starttime;
-        info!("Playtime: {:?} ({:?} - {:?}", playtime, currenttime, starttime);
+        info!("Playtime: {:?}s", playtime);
         self.add_playtime(user_id, &game_id, &playtime).await;
     }
     
